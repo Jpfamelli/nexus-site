@@ -608,14 +608,39 @@
     }
   }
 
+  /* v26 (a11y): com o diálogo aberto, o resto da página fica inerte —
+     nem foco, nem leitor de tela chegam atrás do painel. */
+  function inerte(sim) {
+    var irmaos = document.querySelectorAll(".site-shell > :not(#ia-overlay)");
+    for (var i = 0; i < irmaos.length; i++) {
+      if (sim) irmaos[i].setAttribute("inert", "");
+      else irmaos[i].removeAttribute("inert");
+    }
+  }
+
+  /* v26 (iOS): enquanto o teclado está aberto, o painel acompanha a
+     viewport visual em vez de ficar escondido atrás dele. */
+  var vv = window.visualViewport;
+  function ajustarViewport() {
+    if (!vv || !aberto || !painel) return;
+    var folga = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    overlay.style.setProperty("--kb", folga + "px");
+  }
+  if (vv) {
+    vv.addEventListener("resize", ajustarViewport);
+    vv.addEventListener("scroll", ajustarViewport);
+  }
+
   function abrir() {
     focoAnterior = document.activeElement;
     overlay.hidden = false;
     document.body.style.overflow = "hidden";
+    inerte(true);
     /* força reflow para a transição de entrada acontecer */
     void overlay.offsetWidth;
     overlay.classList.add("is-open");
     aberto = true;
+    ajustarViewport();
 
     if (!iniciado) {
       iniciado = true;
@@ -634,6 +659,8 @@
     overlay.classList.remove("is-open");
     aberto = false;
     document.body.style.overflow = "";
+    inerte(false);
+    overlay.style.removeProperty("--kb");
     var esconder = function () {
       overlay.hidden = true;
     };

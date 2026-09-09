@@ -50,6 +50,7 @@
   var primaryNav = document.getElementById("primary-nav");
 
   function setMenu(open) {
+    var estava = menuOpen;
     menuOpen = open;
     if (primaryNav) primaryNav.classList.toggle("is-open", open);
     if (menuToggle) {
@@ -62,11 +63,26 @@
       if (open) header.classList.remove("is-hidden");
     }
     document.body.style.overflow = open ? "hidden" : "";
+    /* v26 (a11y): ao abrir, o foco vai para o primeiro link; ao fechar
+       por Escape, volta para o botão que abriu o menu. */
+    if (open && primaryNav) {
+      var primeiro = primaryNav.querySelector("a");
+      if (primeiro) window.setTimeout(function () { primeiro.focus(); }, 60);
+    } else if (estava && !open && menuToggle && primaryNav && primaryNav.contains(document.activeElement)) {
+      menuToggle.focus();
+    }
   }
 
   if (menuToggle) {
     menuToggle.addEventListener("click", function () {
       setMenu(!menuOpen);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && menuOpen) {
+        e.preventDefault();
+        setMenu(false);
+        menuToggle.focus();
+      }
     });
   }
 
@@ -504,10 +520,19 @@
     docEl.classList.add("with-loader");
     document.body.style.overflow = "hidden";
 
+    /* v26: 900ms de contagem + 600ms de cortina na 1ª visita da sessão;
+       visita repetida (sessionStorage nx-seen) pula a contagem e mostra
+       só a cortina, 400ms. O dono quer o preloader — ele fica, mais curto. */
+    var visto = false;
+    try {
+      visto = window.sessionStorage.getItem("nx-seen") === "1";
+    } catch (_) {}
     var t0 = Date.now();
-    var DUR = 1500;
+    var DUR = visto ? 0 : 900;
+    var CORTINA = visto ? 400 : 600;
     var ended = false;
     var iv = 0;
+    if (visto) loader.classList.add("is-quick");
 
     var endLoader = function () {
       if (ended) return;
@@ -518,18 +543,25 @@
       armarGarantiaHero();
       loader.classList.add("is-done");
       document.body.style.overflow = "";
-      window.setTimeout(kill, 1100);
+      try {
+        window.sessionStorage.setItem("nx-seen", "1");
+      } catch (_) {}
+      window.setTimeout(kill, CORTINA);
     };
 
-    iv = window.setInterval(function () {
-      var p = Math.min((Date.now() - t0) / DUR, 1);
-      var e = 1 - Math.pow(1 - p, 3);
-      countEl.textContent = String(Math.round(e * 100)).padStart(2, "0");
-      if (p >= 1) endLoader();
-    }, 40);
+    if (visto) {
+      window.setTimeout(endLoader, 60);
+    } else {
+      iv = window.setInterval(function () {
+        var p = Math.min((Date.now() - t0) / DUR, 1);
+        var e = 1 - Math.pow(1 - p, 3);
+        countEl.textContent = String(Math.round(e * 100)).padStart(2, "0");
+        if (p >= 1) endLoader();
+      }, 40);
+    }
 
-    window.setTimeout(endLoader, 2400);
-    window.setTimeout(kill, 5000);
+    window.setTimeout(endLoader, 1600);
+    window.setTimeout(kill, 3200);
   })();
 
   /* ---------- Máscaras de linha do título do herói ---------- */
@@ -616,16 +648,23 @@
     var pt = [], rip = [];
     var raf = 0, vis = false, t = 0, rt = 0, nextAuto = 0;
     var mx = -1e4, my = -1e4;
+    /* v26: no toque o canvas cobre só a primeira tela do herói (não os
+       1.700px inteiros), desenha em dpr 1, malha mais aberta e 30fps. */
+    var COARSE = window.matchMedia("(pointer: coarse)").matches;
+    var pular = false;
 
     function fit() {
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var dpr = COARSE ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+      if (COARSE) {
+        cv.style.height = Math.min(host.clientHeight, Math.round(window.innerHeight * 1.2)) + "px";
+      }
       w = cv.clientWidth;
       h = cv.clientHeight;
       if (!w || !h) return;
       cv.width = w * dpr;
       cv.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      GAP = w < 760 ? 44 : 34;
+      GAP = COARSE ? 56 : w < 760 ? 44 : 34;
       cols = Math.ceil(w / GAP) + 1;
       rows = Math.ceil(h / GAP) + 1;
       pt = [];
@@ -817,7 +856,14 @@
 
     var last = 0;
     function loop(ts) {
-      var dt = Math.min(0.05, (ts - last) / 1000) || 0.016;
+      if (COARSE) {
+        pular = !pular;
+        if (pular) {
+          raf = window.requestAnimationFrame(loop);
+          return;
+        }
+      }
+      var dt = Math.min(0.08, (ts - last) / 1000) || 0.016;
       last = ts;
       step(dt);
       draw();
@@ -895,7 +941,7 @@
       },
       { threshold: 0.3 }
     );
-    document.querySelectorAll(".chat-mock, .operation-panel").forEach(function (n) {
+    document.querySelectorAll(".operation-panel").forEach(function (n) {
       io.observe(n);
     });
 
@@ -934,7 +980,7 @@
         });
         if (ativos.length && !raf) laco();
       },
-      { rootMargin: "10%" }
+      { threshold: 0.05 }
     );
     shots.forEach(function (s) {
       s.style.willChange = "transform";
@@ -1095,10 +1141,22 @@
     if (reducedMotion) return;
 
     var state = { target: window.scrollY, current: window.scrollY, velocity: 0 };
+    /* v26: o laço dorme quando a página está parada e nada que ele move
+       está na tela (ticker, paralaxe, NEXUS gigante); acorda no scroll
+       e quando um desses entra na viewport. */
+    var loopRaf = 0;
+    var lastTs = 0;
+    var acordarLoop = function () {
+      if (!loopRaf && !document.hidden) {
+        lastTs = 0;
+        loopRaf = window.requestAnimationFrame(frame);
+      }
+    };
     window.addEventListener(
       "scroll",
       function () {
         state.target = window.scrollY;
+        acordarLoop();
       },
       { passive: true }
     );
@@ -1120,6 +1178,7 @@
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
       new IntersectionObserver(function (entries) {
         tickerVisible = entries[0].isIntersecting;
+        if (tickerVisible) acordarLoop();
       }).observe(ticker);
     }
 
@@ -1153,6 +1212,7 @@
           });
           if (item) item.visible = entry.isIntersecting;
         });
+        acordarLoop();
       },
       { rootMargin: "20%" }
     );
@@ -1166,11 +1226,9 @@
     if (brandMoment) {
       new IntersectionObserver(function (entries) {
         brandVisible = entries[0].isIntersecting;
+        if (brandVisible) acordarLoop();
       }).observe(brandMoment);
     }
-
-    var loopRaf = 0;
-    var lastTs = 0;
 
     function frame(ts) {
       var dt = lastTs ? Math.min((ts - lastTs) / 16.67, 4) : 1;
@@ -1178,7 +1236,8 @@
 
       state.current += (state.target - state.current) * 0.1;
       state.velocity = state.target - state.current;
-      if (Math.abs(state.velocity) < 0.05) state.current = state.target;
+      var parado = Math.abs(state.velocity) < 0.05;
+      if (parado) state.current = state.target;
 
       var skew = Math.max(-5, Math.min(5, state.velocity * 0.05));
 
@@ -1188,9 +1247,11 @@
         track.style.transform = "translate3d(" + -wrapped.toFixed(2) + "px, 0, 0) skewX(" + skew.toFixed(3) + "deg)";
       }
 
+      var plxVivo = false;
       for (var i = 0; i < plxItems.length; i++) {
         var item = plxItems[i];
         if (!item.visible) continue;
+        plxVivo = true;
         var center = state.current + window.innerHeight / 2 - (item.top + item.h / 2);
         item.el.style.translate = "0 " + (center * (1 - item.speed)).toFixed(2) + "px";
       }
@@ -1201,9 +1262,15 @@
         brandWord.style.translate = (progress - 0.5) * -70 + "px 0";
       }
 
+      /* Página parada e nada em movimento na tela: dorme. O ticker é o
+         único que anda sozinho — enquanto ele está visível o laço segue. */
+      if (parado && !tickerVisible && !brandVisible && !plxVivo) {
+        loopRaf = 0;
+        return;
+      }
       loopRaf = window.requestAnimationFrame(frame);
     }
-    loopRaf = window.requestAnimationFrame(frame);
+    acordarLoop();
 
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) {
@@ -1211,10 +1278,7 @@
           window.cancelAnimationFrame(loopRaf);
           loopRaf = 0;
         }
-      } else if (!loopRaf) {
-        lastTs = 0;
-        loopRaf = window.requestAnimationFrame(frame);
-      }
+      } else acordarLoop();
     });
   })();
 
@@ -1645,16 +1709,20 @@
     var raf = 0, vis = false, t = 0, rt = 0, nextAuto = 0;
     var rip = [];
     var lastTs = 0;
+    /* v26: no toque a grade é 2× mais aberta, dpr 1 e o canvas cobre
+       só a altura de uma tela e meia (a seção cresce com o diagnóstico). */
+    var COARSE = window.matchMedia("(pointer: coarse)").matches;
 
     function fit() {
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var dpr = COARSE ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+      if (COARSE) cv.style.height = Math.min(sec.clientHeight, Math.round(window.innerHeight * 1.5)) + "px";
       w = cv.clientWidth;
       h = cv.clientHeight;
       if (!w || !h) return;
       cv.width = w * dpr;
       cv.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      GAP = w < 760 ? 54 : 46;
+      GAP = COARSE ? 96 : w < 760 ? 54 : 46;
       cols = Math.ceil(w / GAP) + 1;
       rows = Math.ceil(h / GAP) + 1;
     }
@@ -1716,11 +1784,16 @@
     }
 
     fit();
-    new IntersectionObserver(function (e) {
-      vis = e[0].isIntersecting;
-      if (vis) play();
-      else stop();
-    }).observe(sec);
+    /* v26: só desenha com pelo menos 8% da seção na tela (antes rodava
+       com 1px visível, do FAQ até o rodapé). Observa o próprio canvas. */
+    new IntersectionObserver(
+      function (e) {
+        vis = e[0].isIntersecting;
+        if (vis) play();
+        else stop();
+      },
+      { threshold: 0.08 }
+    ).observe(cv);
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) stop();
       else play();
@@ -1813,14 +1886,22 @@
 
       var st = estagio(p);
       for (var t = 0; t < titulos.length; t++) {
-        titulos[t].classList.toggle("is-on", +titulos[t].dataset.stage === st);
+        var ligado = +titulos[t].dataset.stage === st;
+        titulos[t].classList.toggle("is-on", ligado);
+        /* v26 (a11y): o h2 expõe só o título do estágio atual ao leitor
+           de tela, em vez dos quatro emendados. */
+        if (ligado) titulos[t].removeAttribute("aria-hidden");
+        else titulos[t].setAttribute("aria-hidden", "true");
       }
 
       var s4 = p >= S4;
       section.classList.toggle("is-s4", s4);
       /* No celular a folha de métricas ocupa a base da tela — o botão
-         flutuante sai de cena enquanto o CTA do palco está em foco. */
-      document.documentElement.classList.toggle("nx-sys-s4", s4 && vis);
+         flutuante sai de cena enquanto o CTA do palco está em foco.
+         v26: só enquanto o trilho ainda ocupa metade da tela (antes a
+         classe sobrevivia até o loop de marcas e o início de projetos). */
+      var trilhoNaTela = track.getBoundingClientRect().bottom > window.innerHeight * 0.5;
+      document.documentElement.classList.toggle("nx-sys-s4", s4 && vis && trilhoNaTela);
       if (s4 && !contou) {
         contou = true;
         Array.prototype.slice.call(stage.querySelectorAll(".sp-count")).forEach(contar);
@@ -3200,133 +3281,6 @@
     });
   })();
 
-  /* ---------- Comparador "antes × depois": cabo arrastável ----------
-     --cut (em %) recorta o painel "com a Nexus" pela direita. Pointer
-     events com captura (mouse, caneta e toque), teclado no slider ARIA
-     e uma varredura de entrada 88% → 50% quando a seção aparece. */
-  (function () {
-    var box = document.getElementById("compare");
-    var handle = document.getElementById("compare-handle");
-    if (!box || !handle) return;
-
-    var callouts = Array.prototype.slice.call(box.querySelectorAll(".cp-callout"));
-    callouts.forEach(function (c) {
-      c.style.left = (+c.dataset.x || 50) + "%";
-    });
-
-    var cut = 88;
-    var alvo = 50;
-    var raf = 0;
-    var arrastando = false;
-
-    function aplicar(v) {
-      cut = v;
-      box.style.setProperty("--cut", v.toFixed(2) + "%");
-      var n = Math.round(v);
-      handle.setAttribute("aria-valuenow", String(n));
-      handle.setAttribute("aria-valuetext", n + "% sem a Nexus, " + (100 - n) + "% com a Nexus");
-      for (var i = 0; i < callouts.length; i++) {
-        var c = callouts[i];
-        var x = +c.dataset.x || 50;
-        var antes = c.parentNode.classList.contains("compare-before");
-        c.classList.toggle("is-on", antes ? x < v - 5 : x > v + 5);
-      }
-    }
-
-    function anim() {
-      cut += (alvo - cut) * 0.16;
-      if (Math.abs(alvo - cut) < 0.05) {
-        aplicar(alvo);
-        raf = 0;
-        return;
-      }
-      aplicar(cut);
-      raf = window.requestAnimationFrame(anim);
-    }
-
-    function ir(v, imediato) {
-      alvo = Math.max(2, Math.min(98, v));
-      if (imediato || reducedMotion) {
-        if (raf) {
-          window.cancelAnimationFrame(raf);
-          raf = 0;
-        }
-        aplicar(alvo);
-      } else if (!raf) {
-        raf = window.requestAnimationFrame(anim);
-      }
-    }
-
-    function posX(e) {
-      var r = box.getBoundingClientRect();
-      return ((e.clientX - r.left) / r.width) * 100;
-    }
-
-    box.addEventListener("pointerdown", function (e) {
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      /* Toque/caneta: só começa no cabo (ou bem perto dele). Um dedo que
-         pousa no painel para rolar a página não pode mover o corte. */
-      if (e.pointerType !== "mouse" && !handle.contains(e.target) && Math.abs(posX(e) - cut) > 6) return;
-      arrastando = true;
-      box.classList.add("is-dragging");
-      try {
-        box.setPointerCapture(e.pointerId);
-      } catch (_) {}
-      ir(posX(e), e.pointerType !== "mouse");
-    });
-    box.addEventListener(
-      "pointermove",
-      function (e) {
-        if (!arrastando) return;
-        ir(posX(e), true);
-      },
-      { passive: true }
-    );
-    var soltar = function () {
-      if (!arrastando) return;
-      arrastando = false;
-      box.classList.remove("is-dragging");
-    };
-    box.addEventListener("pointerup", soltar);
-    box.addEventListener("pointercancel", soltar);
-    box.addEventListener("lostpointercapture", soltar);
-
-    handle.addEventListener("keydown", function (e) {
-      var passo = e.shiftKey ? 10 : 2;
-      var v = null;
-      if (e.key === "ArrowLeft" || e.key === "ArrowDown") v = alvo - passo;
-      else if (e.key === "ArrowRight" || e.key === "ArrowUp") v = alvo + passo;
-      else if (e.key === "Home") v = 2;
-      else if (e.key === "End") v = 98;
-      if (v === null) return;
-      e.preventDefault();
-      ir(v, false);
-    });
-
-    if (reducedMotion || !("IntersectionObserver" in window)) {
-      aplicar(50);
-      alvo = 50;
-      return;
-    }
-
-    aplicar(88);
-    var intro = new IntersectionObserver(
-      function (en) {
-        if (!en[0].isIntersecting) return;
-        intro.disconnect();
-        window.setTimeout(function () {
-          if (!arrastando) ir(50, false);
-        }, 420);
-      },
-      { threshold: 0.35 }
-    );
-    intro.observe(box);
-
-    new IntersectionObserver(function (en) {
-      box.classList.toggle("is-idle", !en[en.length - 1].isIntersecting);
-    }).observe(box);
-  })();
-
   /* ---------- A conta: quanto custa não responder ----------
      Só faz conta com o que o visitante informa: contatos × 30 × % × ticket.
      Resultados tuenam do valor exibido para o novo (CountUp curto) e o
@@ -3484,7 +3438,7 @@
               fmt(perdidos) +
               " contatos sem resposta e R$ " +
               fmt(risco) +
-              " em risco por mês. Quero parar de perder."
+              " em risco por mês. Quero fechar esse vazamento."
           );
       }
       preencher(inC);
@@ -3551,14 +3505,17 @@
     var hora = 6;
     var agend = 12;
 
+    /* v26: eventos diferentes dos do herói e do showcase — aqui é a
+       operação inteira (pós-venda, robôs, anúncios, CRM), não a conversa. */
     var EVENTOS = [
-      { t: "Novo contato no WhatsApp", s: "fora do horário", k: "msg" },
-      { t: "IA respondeu em 4s", s: "horários e valores", k: "ia" },
-      { t: "Agendado · amanhã 9h", s: "confirmado na agenda", k: "cal" },
-      { t: "Orçamento aprovado", s: "equipe avisada", k: "ok" },
-      { t: "Lembrete enviado", s: "horário de amanhã", k: "cal" },
-      { t: "Orçamento retomado", s: "parado há 3 dias", k: "ia" },
-      { t: "Nome e serviço coletados", s: "passado para a equipe", k: "msg" }
+      { t: "Pesquisa de satisfação enviada", s: "serviço concluído às 17h", k: "msg" },
+      { t: "Backup diário concluído", s: "banco salvo, 2,4 MB", k: "ok" },
+      { t: "Alerta de anúncio: CPC subiu", s: "campanha Google · radar", k: "ia" },
+      { t: "Lembrete de retorno disparado", s: "cliente sem visita há 6 meses", k: "cal" },
+      { t: "Resumo semanal gerado pela IA", s: "CRM · 14 leads novos", k: "ia" },
+      { t: "Mensagem de aniversário enviada", s: "pós-venda automático", k: "msg" },
+      { t: "Vigia: tudo no ar", s: "checagem das 8h", k: "ok" },
+      { t: "Orçamento parado retomado", s: "sem resposta há 3 dias", k: "cal" }
     ];
     var ICONES = {
       msg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
@@ -3672,8 +3629,8 @@
 
     /* Estado inicial: três eventos com horários dos últimos minutos. */
     var agora = new Date();
-    evento(EVENTOS[2], new Date(agora.getTime() - 9 * 60000), true);
-    evento(EVENTOS[1], new Date(agora.getTime() - 4 * 60000), true);
+    evento(EVENTOS[1], new Date(agora.getTime() - 9 * 60000), true);
+    evento(EVENTOS[3], new Date(agora.getTime() - 4 * 60000), true);
     evento(EVENTOS[0], new Date(agora.getTime() - 1 * 60000), true);
     medirW();
     desenhar(false);
@@ -3911,63 +3868,6 @@
     })();
   })();
 
-  /* ---------- Herói: faixa de pulso dourada (monitor) sob o status ----------
-     Liga-se aos mesmos gates do herói vivo: nx-past-hero, nx-idle e aba
-     oculta congelam a varredura. Reduced-motion: pulso completo parado. */
-  (function () {
-    var host = document.getElementById("hero-pulse");
-    if (!host) return;
-    nxChart.monitor({
-      host: host,
-      label: "",
-      period: 3400,
-      gate: function () {
-        return docEl.classList.contains("nx-past-hero") || docEl.classList.contains("nx-idle");
-      }
-    });
-  })();
-
-  /* ---------- Showcase estágio 4: micro-sparklines atrás das métricas (cena ilustrativa) ---------- */
-  (function () {
-    var metricas = Array.prototype.slice.call(document.querySelectorAll("#showcase-metrics .sp-metric"));
-    if (!metricas.length) return;
-    var SERIES = [
-      [38, 31, 26, 19, 14, 11, 8, 6, 5, 4, 4, 4],
-      [10, 22, 31, 45, 52, 64, 73, 82, 90, 96, 100, 100],
-      [9, 8, 8, 6, 5, 5, 3, 2, 2, 1, 0, 0]
-    ];
-    var sparks = metricas.map(function (m, i) {
-      var host = document.createElement("span");
-      host.className = "sp-spark";
-      host.setAttribute("aria-hidden", "true");
-      m.insertBefore(host, m.firstChild);
-      return nxChart.spark({ host: host, values: SERIES[i] || SERIES[0], label: "", immediate: true, ymax: i === 1 ? 100 : undefined });
-    });
-    var sec = document.querySelector(".showcase-section");
-    if (!sec || reducedMotion) {
-      sparks.forEach(function (s) {
-        s.wrap.classList.add("is-drawn");
-      });
-      return;
-    }
-    /* desenha quando o estágio 4 acende (classe is-s4 aplicada pelo showcase) */
-    var mo = new MutationObserver(function () {
-      if (sec.classList.contains("is-s4")) {
-        sparks.forEach(function (s) {
-          s.wrap.classList.add("is-drawn");
-        });
-        mo.disconnect();
-      }
-    });
-    mo.observe(sec, { attributes: true, attributeFilter: ["class"] });
-    if (sec.classList.contains("is-s4")) {
-      sparks.forEach(function (s) {
-        s.wrap.classList.add("is-drawn");
-      });
-      mo.disconnect();
-    }
-  })();
-
   /* ---------- Pacotes: barra empilhada "o que entra", derivada da lista real ----------
      Cada item do card é classificado por palavra-chave em quatro frentes.
      "Tudo do pacote X" herda os itens do card anterior. Nada inventado:
@@ -4023,11 +3923,13 @@
         .map(function (c) {
           return { label: c.label, value: c.value, detail: c.exemplos.join(" · ") };
         });
+      /* v26: só a barra e o rótulo — a legenda repetia a lista logo
+         abaixo e concorria com o preço; o tooltip explica cada segmento. */
       var box = document.createElement("div");
       box.className = "package-mix";
       var head = document.createElement("div");
       head.className = "package-mix-head";
-      head.innerHTML = "<span>O QUE ENTRA</span><span>" + lista.length + " ITENS</span>";
+      head.innerHTML = "<span>O QUE ENTRA</span><span>" + lista.length + " ITENS · 4 FRENTES</span>";
       box.appendChild(head);
       var host = document.createElement("div");
       host.className = "package-mix-bar";
@@ -4048,6 +3950,7 @@
           ".",
         items: itensBarra,
         table: true,
+        legend: false,
         xName: "Frente",
         yName: "Itens"
       });
@@ -4100,4 +4003,566 @@
       io.observe(w);
     });
   })();
+  /* ============================================================
+     v26 — registro de cliques nos CTAs, mapa do ecossistema IndyCar
+     e diagnóstico em 60 segundos. Regras mantidas: relógio real ou
+     rAF central que dorme; pausa fora da viewport e com aba oculta;
+     reduced-motion = tudo desenhado e parado; nada some sem JS.
+     ============================================================ */
+
+  /* ---------- Cliques nos CTAs (WhatsApp e telefone): um listener só ----------
+     Registra o texto do CTA e a seção de origem. Sem serviço configurado
+     nada sai da página: fica em window.dataLayer (GA4/GTM leem daí) e no
+     gtag, se existir. Para um endpoint próprio (Netlify Function, Plausible):
+     window.NX_ANALYTICS = { endpoint: "https://..." } antes deste script. */
+  (function () {
+    document.addEventListener(
+      "click",
+      function (e) {
+        var a = e.target instanceof Element ? e.target.closest('a[href*="wa.me"], a[href^="tel:"]') : null;
+        if (!a) return;
+        var sec = a.closest("section, footer, header, .client-loop, .brand-moment, .ia-overlay");
+        var dado = {
+          event: "nx_cta",
+          canal: /^tel:/.test(a.getAttribute("href") || "") ? "tel" : "whatsapp",
+          texto: (a.getAttribute("aria-label") || a.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          secao: sec ? sec.id || (sec.className || "").split(" ")[0] : "",
+          largura: window.innerWidth,
+          t: Date.now()
+        };
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push(dado);
+        if (typeof window.gtag === "function") {
+          try {
+            window.gtag("event", "nx_cta", dado);
+          } catch (_) {}
+        }
+        var cfg = window.NX_ANALYTICS;
+        if (cfg && cfg.endpoint && navigator.sendBeacon) {
+          try {
+            navigator.sendBeacon(cfg.endpoint, JSON.stringify(dado));
+          } catch (_) {}
+        }
+      },
+      { passive: true }
+    );
+  })();
+
+  /* ---------- Mapa do ecossistema IndyCar ----------
+     Oito módulos posicionados em % (data-x/data-y) sobre um palco de
+     proporção fixa; as ligações são <path> em hairline bronze que se
+     desenham ao entrar (stroke-dashoffset) e recebem pulsos de dados
+     viajando por relógio real (getPointAtLength no rAF central do
+     nxChart). Hover/foco/toque abre o cartão do módulo. No celular o
+     mapa vira uma coluna: os nós empilham numa linha central e o cartão
+     abre logo abaixo. Reduced-motion: tudo desenhado e parado. */
+  (function () {
+    var map = document.getElementById("eco-map");
+    var svg = document.getElementById("eco-lines");
+    if (!map || !svg) return;
+
+    var NS = "http://www.w3.org/2000/svg";
+    var VW = 1000;
+    var VH = 620;
+    var nodes = Array.prototype.slice.call(map.querySelectorAll(".eco-node"));
+    var porChave = {};
+    var descs = {};
+    var pos = {};
+
+    nodes.forEach(function (n) {
+      var k = n.dataset.eco;
+      porChave[k] = n;
+      pos[k] = { x: +n.dataset.x, y: +n.dataset.y };
+      n.style.setProperty("--x", n.dataset.x + "%");
+      n.style.setProperty("--y", n.dataset.y + "%");
+      var d = document.getElementById(n.getAttribute("aria-controls"));
+      if (d) {
+        descs[k] = d;
+        d.style.setProperty("--x", n.dataset.x + "%");
+        d.style.setProperty("--y", n.dataset.y + "%");
+      }
+    });
+
+    /* Tudo passa pelo banco único; em volta, o caminho do cliente. */
+    var LINKS = [
+      ["site", "banco"],
+      ["agenda", "banco"],
+      ["whats", "banco"],
+      ["crm", "banco"],
+      ["pos", "banco"],
+      ["ads", "banco"],
+      ["robos", "banco"],
+      ["site", "agenda"],
+      ["agenda", "whats"],
+      ["whats", "crm"],
+      ["crm", "pos"],
+      ["ads", "site"],
+      ["robos", "ads"]
+    ];
+
+    var gLinks = document.createElementNS(NS, "g");
+    gLinks.setAttribute("class", "eco-links");
+    svg.appendChild(gLinks);
+    var gPulsos = document.createElementNS(NS, "g");
+    gPulsos.setAttribute("class", "eco-pulses");
+    svg.appendChild(gPulsos);
+
+    function ponto(k) {
+      return { x: (pos[k].x / 100) * VW, y: (pos[k].y / 100) * VH };
+    }
+
+    var paths = [];
+    LINKS.forEach(function (l, i) {
+      if (!pos[l[0]] || !pos[l[1]]) return;
+      var a = ponto(l[0]);
+      var b = ponto(l[1]);
+      var dx = b.x - a.x;
+      var dy = b.y - a.y;
+      var len = Math.hypot(dx, dy) || 1;
+      var curva = l[1] === "banco" ? 0.07 : 0.16;
+      var cx = (a.x + b.x) / 2 - dy * curva;
+      var cy = (a.y + b.y) / 2 + dx * curva;
+      var p = document.createElementNS(NS, "path");
+      p.setAttribute("d", "M" + a.x.toFixed(1) + " " + a.y.toFixed(1) + " Q" + cx.toFixed(1) + " " + cy.toFixed(1) + " " + b.x.toFixed(1) + " " + b.y.toFixed(1));
+      p.setAttribute("pathLength", "1");
+      p.setAttribute("class", "eco-link" + (l[1] === "banco" ? " eco-link-core" : ""));
+      p.style.setProperty("--d", String(i * 90));
+      p.dataset.from = l[0];
+      p.dataset.to = l[1];
+      gLinks.appendChild(p);
+      paths.push(p);
+    });
+
+    var pulsos = paths.map(function (p, i) {
+      var c = document.createElementNS(NS, "circle");
+      c.setAttribute("class", "eco-pulse");
+      c.setAttribute("r", "3.2");
+      c.style.opacity = "0";
+      gPulsos.appendChild(c);
+      return { el: c, path: p, len: 0, dur: 2600 + (i % 5) * 420, off: i * 530, dir: i % 3 === 0 ? -1 : 1 };
+    });
+
+    var MOBILE = window.matchMedia("(max-width: 839px)");
+    var vis = false;
+    var ligado = false;
+
+    function pausado() {
+      return document.hidden || !vis || reducedMotion || MOBILE.matches || docEl.classList.contains("nx-idle");
+    }
+
+    function ligar() {
+      if (ligado || pausado() || !nxChart) return;
+      ligado = true;
+      var t0 = performance.now();
+      nxChart.schedule(function (ts) {
+        if (pausado()) {
+          ligado = false;
+          for (var j = 0; j < pulsos.length; j++) pulsos[j].el.style.opacity = "0";
+          return false;
+        }
+        for (var i = 0; i < pulsos.length; i++) {
+          var u = pulsos[i];
+          if (!u.len) {
+            try {
+              u.len = u.path.getTotalLength();
+            } catch (_) {
+              u.len = 0;
+            }
+            if (!u.len) continue;
+          }
+          var f = ((ts - t0 + u.off) % u.dur) / u.dur;
+          if (u.dir < 0) f = 1 - f;
+          var pt = u.path.getPointAtLength(f * u.len);
+          u.el.setAttribute("cx", pt.x.toFixed(1));
+          u.el.setAttribute("cy", pt.y.toFixed(1));
+          u.el.style.opacity = f < 0.1 ? (f / 0.1).toFixed(2) : f > 0.9 ? ((1 - f) / 0.1).toFixed(2) : "1";
+        }
+        return true;
+      });
+    }
+
+    /* desenho ao entrar (uma vez) */
+    if (reducedMotion || !("IntersectionObserver" in window)) {
+      map.classList.add("is-drawn");
+      vis = true;
+    } else {
+      var ioDraw = new IntersectionObserver(
+        function (en) {
+          if (!en[0].isIntersecting) return;
+          ioDraw.disconnect();
+          map.classList.add("is-drawn");
+        },
+        { threshold: 0.2 }
+      );
+      ioDraw.observe(map);
+      /* garantia: se o observer não disparar com o mapa já na tela, desenha */
+      window.setTimeout(function () {
+        var r = map.getBoundingClientRect();
+        if (r.top < window.innerHeight && r.bottom > 0) map.classList.add("is-drawn");
+      }, 9000);
+      new IntersectionObserver(
+        function (en) {
+          vis = en[en.length - 1].isIntersecting;
+          map.classList.toggle("is-idle", !vis);
+          if (vis) window.setTimeout(ligar, map.classList.contains("is-drawn") ? 0 : 900);
+        },
+        { threshold: 0.12 }
+      ).observe(map);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) window.setTimeout(ligar, 80);
+      });
+      MOBILE.addEventListener ? MOBILE.addEventListener("change", ligar) : MOBILE.addListener(ligar);
+    }
+
+    /* cartões dos módulos */
+    var aberto = null;
+    var fixo = false;
+    var fecharT = 0;
+
+    function abrir(k, porClique) {
+      if (aberto && aberto !== k) fechar();
+      var n = porChave[k];
+      var d = descs[k];
+      if (!n || !d) return;
+      window.clearTimeout(fecharT);
+      aberto = k;
+      fixo = !!porClique;
+      n.setAttribute("aria-expanded", "true");
+      n.classList.add("is-open");
+      d.hidden = false;
+      map.classList.add("has-open");
+      for (var i = 0; i < paths.length; i++) {
+        paths[i].classList.toggle("is-lit", paths[i].dataset.from === k || paths[i].dataset.to === k);
+      }
+    }
+
+    function fechar() {
+      window.clearTimeout(fecharT);
+      if (!aberto) return;
+      var n = porChave[aberto];
+      var d = descs[aberto];
+      if (n) {
+        n.setAttribute("aria-expanded", "false");
+        n.classList.remove("is-open");
+      }
+      if (d) d.hidden = true;
+      aberto = null;
+      fixo = false;
+      map.classList.remove("has-open");
+      for (var i = 0; i < paths.length; i++) paths[i].classList.remove("is-lit");
+    }
+
+    function agendarFechar() {
+      window.clearTimeout(fecharT);
+      fecharT = window.setTimeout(function () {
+        if (!fixo) fechar();
+      }, 260);
+    }
+
+    nodes.forEach(function (n) {
+      var k = n.dataset.eco;
+      n.addEventListener("click", function () {
+        if (aberto === k && fixo) fechar();
+        else abrir(k, true);
+      });
+      if (finePointer && !MOBILE.matches) {
+        n.addEventListener("pointerenter", function () {
+          if (!fixo) abrir(k, false);
+          else window.clearTimeout(fecharT);
+        });
+        n.addEventListener("pointerleave", function () {
+          if (!fixo) agendarFechar();
+        });
+      }
+      var d = descs[k];
+      if (d && finePointer) {
+        d.addEventListener("pointerenter", function () {
+          window.clearTimeout(fecharT);
+        });
+        d.addEventListener("pointerleave", function () {
+          if (!fixo) agendarFechar();
+        });
+      }
+    });
+
+    map.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && aberto) {
+        var n = porChave[aberto];
+        fechar();
+        if (n) n.focus();
+      }
+    });
+    /* Fecha ao clicar fora — em "click", não em "pointerdown": no celular o
+       cartão aberto ocupa espaço no fluxo, e fechar no pointerdown deslocava
+       a página debaixo do dedo antes do touchend (o toque se perdia). */
+    document.addEventListener("click", function (e) {
+      if (aberto && !(e.target instanceof Element && map.contains(e.target))) fechar();
+    });
+    window.addEventListener("resize", function () {
+      window.clearTimeout(map.__rt);
+      map.__rt = window.setTimeout(function () {
+        for (var i = 0; i < pulsos.length; i++) pulsos[i].len = 0;
+      }, 200);
+    });
+  })();
+
+  /* ---------- Diagnóstico em 60 segundos ----------
+     Quatro etapas em cartas (nome + negócio; cidade; o que trava; canal
+     e horário) e um resumo em "ordem de serviço". Sem backend: o botão
+     final abre o wa.me com a mensagem montada. Tudo fica salvo em
+     localStorage e volta quando a pessoa reabre a página. Enter avança;
+     Escape não faz nada destrutivo; erros em role=alert. */
+  (function () {
+    var root = document.getElementById("diagnostico");
+    var form = document.getElementById("diag-form");
+    if (!root || !form) return;
+
+    var steps = Array.prototype.slice.call(form.querySelectorAll(".diag-step"));
+    var back = document.getElementById("diag-back");
+    var next = document.getElementById("diag-next");
+    var reset = document.getElementById("diag-reset");
+    var count = document.getElementById("diag-count");
+    var prog = document.getElementById("diag-progress");
+    var erro = document.getElementById("diag-error");
+    var send = document.getElementById("diag-send");
+    var osId = document.getElementById("diag-os-id");
+    var TOTAL = 4;
+    var KEY = "nx-diag-v1";
+    var WA = "https://wa.me/5512982211090?text=";
+    var atual = 1;
+    var salvarT = 0;
+
+    root.classList.add("is-js");
+
+    function campo(nome) {
+      return form.elements[nome] ? form.elements[nome] : null;
+    }
+    function valor(nome) {
+      var c = campo(nome);
+      if (!c) return "";
+      if (c.length !== undefined && !c.tagName) {
+        /* RadioNodeList */
+        return c.value || "";
+      }
+      return String(c.value || "").trim();
+    }
+    function marcados(nome) {
+      return Array.prototype.slice
+        .call(form.querySelectorAll('input[name="' + nome + '"]:checked'))
+        .map(function (i) {
+          return i.value;
+        });
+    }
+    function ler() {
+      return {
+        nome: valor("nome"),
+        negocio: valor("negocio"),
+        cidade: valor("cidade"),
+        trava: marcados("trava"),
+        canal: valor("canal"),
+        horario: valor("horario")
+      };
+    }
+
+    function salvar() {
+      try {
+        window.localStorage.setItem(KEY, JSON.stringify({ step: atual, dados: ler(), t: Date.now() }));
+      } catch (_) {}
+    }
+    function limparSalvo() {
+      try {
+        window.localStorage.removeItem(KEY);
+      } catch (_) {}
+    }
+    function restaurar() {
+      var raw = null;
+      try {
+        raw = window.localStorage.getItem(KEY);
+      } catch (_) {}
+      if (!raw) return 1;
+      var d;
+      try {
+        d = JSON.parse(raw);
+      } catch (_) {
+        return 1;
+      }
+      if (!d || !d.dados) return 1;
+      var v = d.dados;
+      ["nome", "negocio", "cidade"].forEach(function (k) {
+        var c = campo(k);
+        if (c && typeof v[k] === "string") c.value = v[k];
+      });
+      form.querySelectorAll('input[name="trava"]').forEach(function (i) {
+        i.checked = Array.isArray(v.trava) && v.trava.indexOf(i.value) >= 0;
+      });
+      ["canal", "horario"].forEach(function (k) {
+        if (!v[k]) return;
+        var r = form.querySelector('input[name="' + k + '"][value="' + v[k].replace(/"/g, "") + '"]');
+        if (r) r.checked = true;
+      });
+      var st = parseInt(d.step, 10) || 1;
+      return Math.max(1, Math.min(TOTAL + 1, st));
+    }
+
+    function rotulo(btn, texto) {
+      var l = btn.querySelector(".lbl");
+      if (l) {
+        Array.prototype.slice.call(l.querySelectorAll("span")).forEach(function (s) {
+          s.textContent = texto;
+        });
+        return;
+      }
+      var tn = Array.prototype.slice.call(btn.childNodes).find(function (n) {
+        return n.nodeType === 3 && n.textContent.trim();
+      });
+      if (tn) tn.textContent = " " + texto + " ";
+    }
+
+    function mostrarErro(msg) {
+      if (!erro) return;
+      erro.textContent = msg;
+      erro.hidden = !msg;
+    }
+
+    function validar(n) {
+      if (n === 1 && valor("nome").length < 2) {
+        mostrarErro("Diga pelo menos como devemos te chamar.");
+        var c = campo("nome");
+        if (c) c.focus();
+        return false;
+      }
+      if (n === 3 && !marcados("trava").length) {
+        mostrarErro("Marque pelo menos uma coisa que trava hoje — pode ser mais de uma.");
+        var primeira = form.querySelector('input[name="trava"]');
+        if (primeira) primeira.focus();
+        return false;
+      }
+      mostrarErro("");
+      return true;
+    }
+
+    function hashCurto(txt) {
+      var h = 0;
+      for (var i = 0; i < txt.length; i++) h = (h * 31 + txt.charCodeAt(i)) >>> 0;
+      return h.toString(36).toUpperCase().slice(-4).padStart(4, "0");
+    }
+
+    function resumo() {
+      var v = ler();
+      var set = function (id, t) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = t || "—";
+      };
+      set("diag-s-nome", v.nome);
+      set("diag-s-negocio", v.negocio);
+      set("diag-s-cidade", v.cidade);
+      set("diag-s-trava", v.trava.join(", "));
+      set("diag-s-canal", v.canal);
+      set("diag-s-horario", v.horario);
+      var d = new Date();
+      var num = "OS-" + String(d.getDate()).padStart(2, "0") + String(d.getMonth() + 1).padStart(2, "0") + "-" + hashCurto(v.nome + "|" + v.negocio + "|" + v.cidade);
+      if (osId) osId.textContent = "Nº " + num;
+      var linhas = [
+        "Olá, vim pelo site da Nexus e fiz o diagnóstico em 60 segundos (" + num + ").",
+        "Nome: " + (v.nome || "—"),
+        "Negócio: " + (v.negocio || "—"),
+        "Cidade: " + (v.cidade || "—"),
+        "O que mais trava: " + (v.trava.length ? v.trava.join(", ") : "—"),
+        "Canal preferido: " + (v.canal || "—"),
+        "Melhor horário: " + (v.horario || "—"),
+        "Quero marcar meu diagnóstico gratuito de 30 minutos."
+      ];
+      if (send) send.href = WA + encodeURIComponent(linhas.join("\n"));
+    }
+
+    function focar(n) {
+      var alvo;
+      var step = steps.find(function (s) {
+        return +s.dataset.step === n;
+      });
+      if (!step) return;
+      if (n > TOTAL) alvo = send;
+      else alvo = step.querySelector('input:not([type="checkbox"]):not([type="radio"]), input:checked, input');
+      if (alvo && alvo.focus) {
+        try {
+          alvo.focus({ preventScroll: true });
+        } catch (_) {
+          alvo.focus();
+        }
+      }
+    }
+
+    function mostrar(n, foco) {
+      atual = n;
+      steps.forEach(function (s) {
+        var k = +s.dataset.step;
+        var p = k === n ? "active" : k < n ? "prev" : k === n + 1 ? "next" : "far";
+        s.dataset.pos = p;
+        s.classList.toggle("is-active", k === n);
+        if (k === n) {
+          s.removeAttribute("inert");
+          s.removeAttribute("aria-hidden");
+        } else {
+          s.setAttribute("inert", "");
+          s.setAttribute("aria-hidden", "true");
+        }
+      });
+      if (count) count.textContent = n > TOTAL ? "RESUMO PRONTO" : "ETAPA " + n + " / " + TOTAL;
+      if (prog) {
+        var segs = prog.children;
+        for (var i = 0; i < segs.length; i++) segs[i].classList.toggle("is-on", i < n);
+        prog.classList.toggle("is-done", n > TOTAL);
+      }
+      if (back) back.hidden = n === 1;
+      if (next) {
+        next.hidden = n > TOTAL;
+        rotulo(next, n === TOTAL ? "Ver meu resumo" : "Continuar");
+      }
+      if (reset) reset.hidden = n <= TOTAL;
+      root.dataset.step = String(n);
+      mostrarErro("");
+      if (n > TOTAL) resumo();
+      salvar();
+      if (foco) window.setTimeout(function () { focar(n); }, reducedMotion ? 0 : 90);
+    }
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (atual > TOTAL) return;
+      if (!validar(atual)) return;
+      mostrar(atual + 1, true);
+    });
+    form.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var t = e.target;
+      if (t && (t.type === "checkbox" || t.type === "radio")) {
+        e.preventDefault();
+        if (atual <= TOTAL && validar(atual)) mostrar(atual + 1, true);
+      }
+    });
+    if (back) {
+      back.addEventListener("click", function () {
+        if (atual > 1) mostrar(atual - 1, true);
+      });
+    }
+    if (reset) {
+      reset.addEventListener("click", function () {
+        limparSalvo();
+        form.reset();
+        mostrar(1, true);
+      });
+    }
+    form.addEventListener("input", function () {
+      mostrarErro("");
+      window.clearTimeout(salvarT);
+      salvarT = window.setTimeout(salvar, 250);
+    });
+    form.addEventListener("change", function () {
+      window.clearTimeout(salvarT);
+      salvarT = window.setTimeout(salvar, 120);
+    });
+
+    mostrar(restaurar(), false);
+  })();
+
 })();
