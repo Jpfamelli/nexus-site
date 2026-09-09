@@ -1893,9 +1893,42 @@ button:focus-visible {
     gap: 5rem;
   }
 
+  /* v27: entre 840 e 1119px (o dono usa ~850px) a frase do rodapé
+     ficava numa coluna de ~120px, uma palavra por linha. Aqui: marca e
+     links na 1ª linha, frase inteira na 2ª; a coluna de 7rem reserva o
+     selo. A linha única de 4 colunas volta a partir de 1280px (antes disso a frase cabia em ~200px). */
+  .footer-grid {
+    grid-template-columns: auto minmax(0, 1fr) 7rem;
+    gap: 1.5rem 3rem;
+  }
+
+  .footer-grid > p {
+    grid-row: 2;
+    grid-column: 1 / 3;
+  }
+
+  .footer-links {
+    grid-row: 1;
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1280px) {
   .footer-grid {
     grid-template-columns: 0.5fr 1fr auto 7rem;
     gap: 3rem;
+  }
+
+  .footer-grid > p {
+    grid-row: auto;
+    grid-column: auto;
+  }
+
+  .footer-links {
+    grid-row: auto;
+    grid-column: auto;
+    justify-content: flex-start;
   }
 }
 
@@ -2120,8 +2153,12 @@ button:focus-visible {
 }
 
 /* ============================================================
-   Cursor autoral — ponto imediato, aro com atraso e luz ambiente.
-   Ativo apenas com ponteiro preciso e sem movimento reduzido.
+   Cursor autoral v27 — "botãozinho redondo com uma auréola":
+   ponto sólido bronze (imediato) + auréola translúcida maior que
+   segue com leve atraso, cresce em links/botões e encolhe no clique.
+   Ativo em qualquer ponteiro fino, inclusive reduced-motion (aí a
+   auréola segue sem mola). A luz ambiente (.cursor-halo) é só
+   decoração e desliga em reduced-motion.
    ============================================================ */
 
 .cursor-dot,
@@ -2132,64 +2169,69 @@ button:focus-visible {
   left: 0;
   opacity: 0;
   pointer-events: none;
+  will-change: transform;
 }
 
 .cursor-dot {
-  z-index: 320;
-  width: 6px;
-  height: 6px;
+  z-index: 620;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  transition: opacity 160ms var(--ease-out);
+}
+
+.cursor-dot::before {
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
   background: var(--nexus-bronze-light);
-  transition: opacity 200ms var(--ease-out);
+  box-shadow: 0 0 0 1px rgba(5, 8, 12, 0.45), 0 0 10px rgba(217, 165, 68, 0.55);
+  content: "";
+  transition: transform 160ms var(--ease-out);
+}
+
+.cursor-dot.is-pressed::before {
+  transform: scale(0.6);
 }
 
 .cursor-ring {
-  z-index: 310;
-  width: 44px;
-  height: 44px;
+  z-index: 610;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
   transition: opacity 200ms var(--ease-out);
 }
 
 .cursor-ring::before {
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(176, 118, 31, 0.85);
+  border: 1.5px solid rgba(176, 118, 31, 0.7);
   border-radius: 50%;
+  background: rgba(176, 118, 31, 0.1);
+  box-shadow: 0 0 18px rgba(176, 118, 31, 0.22), inset 0 0 12px rgba(176, 118, 31, 0.12);
   content: "";
-  transition: transform 240ms var(--ease-out), background-color 240ms var(--ease-out);
-}
-
-.cursor-ring::after {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--nexus-bronze-light);
-  content: attr(data-label);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.5rem;
-  letter-spacing: 0.08em;
-  opacity: 0;
-  transition: opacity 200ms var(--ease-out);
+  transition: transform 220ms var(--ease-out), background-color 220ms var(--ease-out), border-color 220ms var(--ease-out);
 }
 
 .cursor-ring.is-active::before {
-  background: rgba(176, 118, 31, 0.08);
-  transform: scale(1.55);
-}
-
-.cursor-ring.is-active::after {
-  opacity: 1;
+  border-color: rgba(217, 165, 68, 0.95);
+  background: rgba(176, 118, 31, 0.16);
+  transform: scale(1.5);
 }
 
 .cursor-ring.is-pressed::before {
-  transform: scale(0.82);
+  transform: scale(0.72);
+}
+
+.cursor-ring.is-active.is-pressed::before {
+  transform: scale(1.15);
 }
 
 .cursor-halo {
   z-index: 240;
   width: 360px;
   height: 360px;
+  margin: -180px 0 0 -180px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(176, 118, 31, 0.1), transparent 65%);
   transition: opacity 400ms var(--ease-out);
@@ -2201,11 +2243,31 @@ button:focus-visible {
   opacity: 1;
 }
 
-html.has-custom-cursor,
-html.has-custom-cursor body,
-html.has-custom-cursor a[href],
-html.has-custom-cursor button {
+/* Ponto e auréola ficam ACIMA do overlay da demo (400) e do preloader
+   (500): com cursor:none ligado, o cursor custom precisa aparecer em
+   qualquer camada — senão o mouse some dentro da demo de IA.
+   cursor:none SÓ quando o cursor custom está montado E visível:
+   o JS liga .has-custom-cursor no primeiro pointermove (quando mostra
+   o ponto) e desliga ao sair da janela / perder o foco. Em .no-anim os
+   elementos do cursor ficam escondidos, então o nativo volta. */
+html.has-custom-cursor:not(.no-anim),
+html.has-custom-cursor:not(.no-anim) body,
+html.has-custom-cursor:not(.no-anim) a[href],
+html.has-custom-cursor:not(.no-anim) button,
+html.has-custom-cursor:not(.no-anim) label,
+html.has-custom-cursor:not(.no-anim) input,
+html.has-custom-cursor:not(.no-anim) textarea,
+html.has-custom-cursor:not(.no-anim) select,
+html.has-custom-cursor:not(.no-anim) [role="button"],
+html.has-custom-cursor:not(.no-anim) * {
   cursor: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-dot::before,
+  .cursor-ring::before {
+    transition: none;
+  }
 }
 
 @media (pointer: coarse) {
@@ -2255,8 +2317,6 @@ html.has-custom-cursor button {
 /* Movimento reduzido — remove efeitos não essenciais */
 @media (prefers-reduced-motion: reduce) {
   .scroll-progress,
-  .cursor-dot,
-  .cursor-ring,
   .cursor-halo,
   .hero-scan {
     display: none;
@@ -4943,51 +5003,8 @@ html.no-anim .nx-fx {
    NEXUS em contorno que inunda e grão de impressão no escuro
    ============================================================ */
 
-/* ---------- Cursor: cantos em L que travam no alvo ---------- */
-.cursor-corner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--nexus-bronze);
-  opacity: 0;
-  transition: opacity 180ms var(--ease-out);
-  will-change: transform;
-}
-
-.cursor-corner-tl {
-  border-right: 0;
-  border-bottom: 0;
-}
-
-.cursor-corner-tr {
-  border-left: 0;
-  border-bottom: 0;
-}
-
-.cursor-corner-br {
-  border-left: 0;
-  border-top: 0;
-}
-
-.cursor-corner-bl {
-  border-right: 0;
-  border-top: 0;
-}
-
-.cursor-ring::before {
-  transition: transform 240ms var(--ease-out), background-color 240ms var(--ease-out), opacity 200ms var(--ease-out);
-}
-
-.cursor-ring.is-locked .cursor-corner {
-  opacity: 1;
-}
-
-.cursor-ring.is-locked::before {
-  opacity: 0;
-  transform: scale(0.6);
-}
+/* (v27) Os cantos em L do cursor de mira saíram: o cursor agora é
+   ponto + auréola — ver o bloco "Cursor autoral v27". */
 
 /* ---------- Demo da IA: resposta digitada com cursor de bloco ---------- */
 .ia-bolha.is-typing::after {
@@ -6224,13 +6241,136 @@ html.nx-sys-s4 .floating-whatsapp {
   transition: transform 200ms var(--ease-out), background-color 160ms var(--ease-out), opacity 200ms var(--ease-out);
 }
 
-/* Aba congelada (no-anim): nada da cena pode ficar invisível */
-html.no-anim .showcase-section .sp-item,
-html.no-anim .showcase-section .showcase-metrics,
-html.no-anim .showcase-section .showcase-title[data-stage="4"] {
-  opacity: 1;
-  transform: none;
-  filter: none;
+/* ============================================================
+   v27 — Cena ESTÁTICA do showcase (reduced-motion, sem JS e aba
+   congelada .no-anim). Regra: só o título final, conversa completa
+   com o card de agendamento, métricas em FLUXO (abaixo do celular;
+   ao lado a partir de 1180px) — nunca por cima, nada empilhado.
+   Vale para .showcase-section:not(.is-live) (o JS não liga a cena
+   em reduced-motion) e para html.no-anim (a cena ligou, mas o
+   relógio de animação congelou).
+   ============================================================ */
+.showcase-section:not(.is-live) .showcase-title:not([data-stage="4"]),
+html.no-anim .showcase-section .showcase-title:not([data-stage="4"]),
+.showcase-section:not(.is-live) .sp-typing,
+html.no-anim .showcase-section .sp-typing,
+.showcase-section:not(.is-live) .showcase-progress,
+html.no-anim .showcase-section .showcase-progress {
+  display: none !important;
+}
+
+html.no-anim .showcase-section .showcase-track {
+  height: auto !important;
+}
+
+html.no-anim .showcase-section .showcase-stage {
+  position: static !important;
+  height: auto !important;
+  padding-block: 4.5rem !important;
+  align-items: center !important;
+  overflow: visible !important;
+}
+
+html.no-anim .showcase-section .showcase-grid {
+  align-content: center !important;
+}
+
+html.no-anim .showcase-section .showcase-title[data-stage="4"],
+html.no-anim .showcase-section .sp-item {
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+  height: auto !important;
+}
+
+html.no-anim .showcase-section .sp-check-circ,
+html.no-anim .showcase-section .sp-check-mark {
+  stroke-dashoffset: 0 !important;
+}
+
+html.no-anim .showcase-section .showcase-phone {
+  transform: none !important;
+}
+
+.showcase-section:not(.is-live) .showcase-right,
+html.no-anim .showcase-section .showcase-right {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 1.5rem !important;
+  min-height: 0 !important;
+}
+
+.showcase-section:not(.is-live) .showcase-phone,
+html.no-anim .showcase-section .showcase-phone {
+  flex: 0 0 auto;
+}
+
+.showcase-section:not(.is-live) .showcase-metrics,
+html.no-anim .showcase-section .showcase-metrics {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  width: min(21rem, 100%) !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.6rem !important;
+}
+
+.showcase-section:not(.is-live) .sp-metric,
+html.no-anim .showcase-section .sp-metric {
+  height: auto !important;
+  padding: 0.65rem 0.85rem !important;
+}
+
+.showcase-section:not(.is-live) .sp-metric strong,
+html.no-anim .showcase-section .sp-metric strong {
+  font-size: 1.5rem !important;
+}
+
+.showcase-section:not(.is-live) .sp-metric > span,
+html.no-anim .showcase-section .sp-metric > span {
+  font-size: 0.74rem !important;
+}
+
+.showcase-section:not(.is-live) .sp-metrics-note,
+html.no-anim .showcase-section .sp-metrics-note,
+.showcase-section:not(.is-live) .showcase-cta,
+html.no-anim .showcase-section .showcase-cta,
+.showcase-section:not(.is-live) .showcase-try,
+html.no-anim .showcase-section .showcase-try {
+  grid-column: 1 / -1 !important;
+  margin-top: 0 !important;
+}
+
+.showcase-section:not(.is-live) .sp-metrics-note,
+html.no-anim .showcase-section .sp-metrics-note {
+  text-align: left !important;
+}
+
+@media (min-width: 1180px) {
+  .showcase-section:not(.is-live) .showcase-right,
+  html.no-anim .showcase-section .showcase-right {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 1.6rem !important;
+  }
+
+  .showcase-section:not(.is-live) .showcase-metrics,
+  html.no-anim .showcase-section .showcase-metrics {
+    width: 16.5rem !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0.8rem !important;
+  }
 }
 
 /* ============================================================
@@ -7153,6 +7293,23 @@ html.no-anim .dash-dot { opacity: 1; }
   text-transform: uppercase;
 }
 
+.cl-sarbomix b {
+  font-family: "Clash Display", "Clash Display Fallback", sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
+.cl-alvexz b {
+  font-family: "Clash Display", "Clash Display Fallback", sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transform: scaleX(0.86);
+  transform-origin: left center;
+}
+
 .cl-you b {
   font-family: "Clash Display", "Clash Display Fallback", sans-serif;
   font-weight: 600;
@@ -7726,6 +7883,143 @@ html.no-anim .sec-wipe { display: none; }
 .package-mix .nxc-seg-3 { fill: #c99a3a; }
 .package-mix .nxc-sw-3 { background: #c99a3a; }
 .package-card.is-ultra .package-mix { position: relative; z-index: 1; }
+
+/* ============================================================
+   v27 — Galeria "Todos os sites": filtros Sites / Sistemas / IA,
+   cartões de sistema (sem screenshot: módulo ilustrado) e selo de
+   site pronto sem URL pública.
+   ============================================================ */
+.gallery-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: -0.4rem 0 1.6rem;
+}
+
+.gallery-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  padding: 0 1.05rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+
+.gallery-filter b {
+  font-weight: 600;
+  color: var(--nexus-bronze-light);
+}
+
+.gallery-filter:hover {
+  border-color: rgba(176, 118, 31, 0.7);
+  color: var(--nexus-white);
+}
+
+.gallery-filter[aria-pressed="true"] {
+  border-color: var(--nexus-bronze);
+  background: rgba(176, 118, 31, 0.16);
+  color: var(--nexus-white);
+}
+
+.gallery-filter:focus-visible {
+  outline: 2px solid var(--nexus-bronze-light);
+  outline-offset: 2px;
+}
+
+.gallery-count {
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.58);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 639px) {
+  .gallery-count {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* site pronto, sem URL pública: a imagem não é link */
+.project-shot-static {
+  cursor: default;
+}
+
+.project-open-soon {
+  opacity: 1;
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(5, 8, 12, 0.85);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.project-card:hover .project-open-soon {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(5, 8, 12, 0.92);
+  color: var(--nexus-white);
+}
+
+/* cartões de sistema: módulo ilustrado no lugar do screenshot */
+.project-shot-sys {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 6;
+  background:
+    radial-gradient(60% 90% at 50% 100%, rgba(176, 118, 31, 0.18), transparent 70%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 28px),
+    var(--nexus-ink);
+}
+
+.project-shot-sys .sys-tag {
+  position: absolute;
+  top: 0.7rem;
+  left: 0.85rem;
+  color: rgba(255, 255, 255, 0.58);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+}
+
+.project-shot-sys .sys-ico {
+  display: grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  border: 1px solid rgba(176, 118, 31, 0.6);
+  background: rgba(5, 8, 12, 0.5);
+  color: var(--nexus-bronze-light);
+  transition: transform 300ms var(--ease-out), border-color 300ms var(--ease-out);
+}
+
+.project-shot-sys .sys-ico svg {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.project-card:hover .project-shot-sys .sys-ico {
+  border-color: var(--nexus-bronze);
+  transform: translateY(-3px);
+}
+
+.project-link-btn {
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: none;
+  padding-top: 0;
+  cursor: pointer;
+}
 
 /* ---------- Projetos: hairline dourada na base, só no hover ---------- */
 .project-line {

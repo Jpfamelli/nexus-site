@@ -138,14 +138,19 @@
     });
   }
 
-  /* ---------- Cursor autoral: ponto imediato + aro e luz com atraso ---------- */
+  /* ---------- Cursor autoral v27: ponto + auréola ----------
+     Ponto sólido bronze cravado no ponteiro; auréola translúcida maior
+     que segue com leve atraso (lerp), cresce em links/botões e encolhe
+     no clique. Roda em QUALQUER ponteiro fino, inclusive reduced-motion
+     (segue sem mola; a luz ambiente fica desligada). Regra do
+     cursor:none: só depois que o cursor custom está montado E visível
+     (.has-custom-cursor liga no primeiro pointermove e desliga ao sair
+     da janela / perder o foco) — nunca "mouse invisível". */
   var dot = document.getElementById("cursor-dot");
   var ring = document.getElementById("cursor-ring");
   var halo = document.getElementById("cursor-halo");
 
-  if (dot && ring && halo && finePointer && !reducedMotion) {
-    document.documentElement.classList.add("has-custom-cursor");
-
+  if (dot && ring && halo && finePointer) {
     var pointerX = -120;
     var pointerY = -120;
     var ringX = pointerX;
@@ -154,82 +159,30 @@
     var haloY = pointerY;
     var cursorRaf = 0;
     var lastPointerMove = 0;
-
-    /* Cantos de mira dentro do aro: travam nos limites do alvo,
-       ecoando os colchetes de .offer-corners e do hero-image-frame. */
-    var ALVO_SELETOR = "[data-cursor-label], .faq-trigger, .project-shot";
-    var CANTO = 10;
-    var FOLGA = 6;
-    var CANTO_BASE = [
-      { x: 7, y: 7 },
-      { x: 27, y: 7 },
-      { x: 27, y: 27 },
-      { x: 7, y: 27 }
-    ];
-    var cantos = ["tl", "tr", "br", "bl"].map(function (pos, i) {
-      var el = document.createElement("span");
-      el.className = "cursor-corner cursor-corner-" + pos;
-      el.setAttribute("aria-hidden", "true");
-      el.style.transform = "translate3d(" + CANTO_BASE[i].x + "px, " + CANTO_BASE[i].y + "px, 0)";
-      ring.appendChild(el);
-      return { el: el, x: CANTO_BASE[i].x, y: CANTO_BASE[i].y };
-    });
-    var alvoTravado = null;
+    var cursorLigado = false;
+    /* sem mola em reduced-motion: a auréola cola no ponteiro */
+    var SEGUE_AURA = reducedMotion ? 1 : 0.18;
+    var SEGUE_LUZ = reducedMotion ? 1 : 0.075;
+    var ALVO_CURSOR = 'a, button, [role="button"], label, input[type="range"], summary';
 
     var acordarCursor = function () {
       if (!cursorRaf) cursorRaf = window.requestAnimationFrame(renderCursor);
     };
 
-    var soltarAlvo = function () {
-      alvoTravado = null;
-      ring.classList.remove("is-locked");
-      acordarCursor();
-    };
-
-    var travarAlvo = function (el) {
-      alvoTravado = el;
-      ring.classList.add("is-locked");
-      acordarCursor();
-    };
-
     var renderCursor = function () {
-      ringX += (pointerX - ringX) * 0.17;
-      ringY += (pointerY - ringY) * 0.17;
-      haloX += (pointerX - haloX) * 0.075;
-      haloY += (pointerY - haloY) * 0.075;
-      dot.style.transform = "translate3d(" + (pointerX - 3) + "px, " + (pointerY - 3) + "px, 0)";
-      ring.style.transform = "translate3d(" + (ringX - 22) + "px, " + (ringY - 22) + "px, 0)";
-      halo.style.transform = "translate3d(" + (haloX - 180) + "px, " + (haloY - 180) + "px, 0)";
-
-      var resto =
-        Math.abs(pointerX - ringX) + Math.abs(pointerY - ringY) + Math.abs(pointerX - haloX) + Math.abs(pointerY - haloY);
-
-      var destino = CANTO_BASE;
-      if (alvoTravado) {
-        var r = alvoTravado.getBoundingClientRect();
-        if (r.right < ringX - 200 || r.left > ringX + 200 || r.bottom < ringY - 200 || r.top > ringY + 200) {
-          soltarAlvo();
-        } else {
-          var ox = ringX - 22;
-          var oy = ringY - 22;
-          destino = [
-            { x: r.left - FOLGA - ox, y: r.top - FOLGA - oy },
-            { x: r.right + FOLGA - CANTO - ox, y: r.top - FOLGA - oy },
-            { x: r.right + FOLGA - CANTO - ox, y: r.bottom + FOLGA - CANTO - oy },
-            { x: r.left - FOLGA - ox, y: r.bottom + FOLGA - CANTO - oy }
-          ];
-        }
+      ringX += (pointerX - ringX) * SEGUE_AURA;
+      ringY += (pointerY - ringY) * SEGUE_AURA;
+      dot.style.transform = "translate3d(" + pointerX + "px, " + pointerY + "px, 0)";
+      ring.style.transform = "translate3d(" + ringX.toFixed(2) + "px, " + ringY.toFixed(2) + "px, 0)";
+      var resto = Math.abs(pointerX - ringX) + Math.abs(pointerY - ringY);
+      if (!reducedMotion) {
+        haloX += (pointerX - haloX) * SEGUE_LUZ;
+        haloY += (pointerY - haloY) * SEGUE_LUZ;
+        halo.style.transform = "translate3d(" + haloX.toFixed(2) + "px, " + haloY.toFixed(2) + "px, 0)";
+        resto += Math.abs(pointerX - haloX) + Math.abs(pointerY - haloY);
       }
-      for (var i = 0; i < 4; i++) {
-        var c = cantos[i];
-        c.x += (destino[i].x - c.x) * 0.17;
-        c.y += (destino[i].y - c.y) * 0.17;
-        c.el.style.transform = "translate3d(" + c.x.toFixed(2) + "px, " + c.y.toFixed(2) + "px, 0)";
-        resto += Math.abs(destino[i].x - c.x) + Math.abs(destino[i].y - c.y);
-      }
-
       /* Ponteiro parado e tudo assentado: o laço dorme até o próximo evento. */
-      if (performance.now() - lastPointerMove > 2500 && resto < 0.2) {
+      if (resto < 0.2 && (reducedMotion || performance.now() - lastPointerMove > 2500)) {
         cursorRaf = 0;
         return;
       }
@@ -237,91 +190,89 @@
     };
 
     var showCursor = function () {
+      /* aba congelada: o CSS esconde o cursor custom — o nativo fica */
+      if (document.documentElement.classList.contains("no-anim")) return;
       dot.classList.add("is-visible");
       ring.classList.add("is-visible");
-      halo.classList.add("is-visible");
+      if (!reducedMotion) halo.classList.add("is-visible");
+      if (!cursorLigado) {
+        cursorLigado = true;
+        document.documentElement.classList.add("has-custom-cursor");
+      }
     };
 
     var hideCursor = function () {
-      dot.classList.remove("is-visible");
-      ring.classList.remove("is-visible", "is-active", "is-pressed", "is-locked");
+      dot.classList.remove("is-visible", "is-pressed");
+      ring.classList.remove("is-visible", "is-active", "is-pressed");
       halo.classList.remove("is-visible");
-      alvoTravado = null;
+      cursorLigado = false;
+      document.documentElement.classList.remove("has-custom-cursor");
     };
 
     document.addEventListener("pointermove", function (event) {
+      if (event.pointerType && event.pointerType !== "mouse" && event.pointerType !== "pen") return;
       pointerX = event.clientX;
       pointerY = event.clientY;
       lastPointerMove = performance.now();
+      if (reducedMotion) {
+        ringX = pointerX;
+        ringY = pointerY;
+      }
       showCursor();
       acordarCursor();
     });
 
     document.addEventListener("pointerover", function (event) {
-      var target = event.target instanceof Element ? event.target.closest("a, button") : null;
-      if (target) {
-        ring.classList.add("is-active");
-        ring.dataset.label = target.dataset.cursorLabel || "ABRIR";
-      }
-      var alvo = event.target instanceof Element ? event.target.closest(ALVO_SELETOR) : null;
-      if (alvo && alvo !== alvoTravado) travarAlvo(alvo);
+      var target = event.target instanceof Element ? event.target.closest(ALVO_CURSOR) : null;
+      if (target) ring.classList.add("is-active");
     });
 
     document.addEventListener("pointerout", function (event) {
-      var from = event.target instanceof Element ? event.target.closest("a, button") : null;
-      var to = event.relatedTarget instanceof Element ? event.relatedTarget.closest("a, button") : null;
-      if (from && from !== to) {
-        ring.classList.remove("is-active");
-        ring.dataset.label = "";
-      }
-      var deAlvo = event.target instanceof Element ? event.target.closest(ALVO_SELETOR) : null;
-      var paraAlvo = event.relatedTarget instanceof Element ? event.relatedTarget.closest(ALVO_SELETOR) : null;
-      if (deAlvo && deAlvo === alvoTravado && deAlvo !== paraAlvo) soltarAlvo();
+      var from = event.target instanceof Element ? event.target.closest(ALVO_CURSOR) : null;
+      var to = event.relatedTarget instanceof Element ? event.relatedTarget.closest(ALVO_CURSOR) : null;
+      if (from && from !== to) ring.classList.remove("is-active");
     });
 
     document.addEventListener("pointerdown", function () {
       ring.classList.add("is-pressed");
+      dot.classList.add("is-pressed");
     });
 
     document.addEventListener("pointerup", function () {
       ring.classList.remove("is-pressed");
+      dot.classList.remove("is-pressed");
     });
-
-    window.addEventListener(
-      "scroll",
-      function () {
-        if (alvoTravado) acordarCursor();
-      },
-      { passive: true }
-    );
 
     document.documentElement.addEventListener("pointerleave", hideCursor);
     window.addEventListener("blur", hideCursor);
-
-    cursorRaf = window.requestAnimationFrame(renderCursor);
-
-    /* Botões magnéticos: acompanham levemente o ponteiro */
-    var magneticItems = Array.prototype.slice.call(
-      document.querySelectorAll(".button, .nav-whatsapp, .floating-whatsapp")
-    );
-
-    magneticItems.forEach(function (item) {
-      item.addEventListener("pointermove", function (event) {
-        var rect = item.getBoundingClientRect();
-        var x = event.clientX - (rect.left + rect.width / 2);
-        var y = event.clientY - (rect.top + rect.height / 2);
-        item.style.transform = "translate3d(" + x * 0.12 + "px, " + y * 0.16 + "px, 0)";
-        /* Magnet (React Bits): a camada interna (seta) desloca um extra,
-           criando profundidade — o conteúdo "escapa" um pouco mais que o botão. */
-        item.style.setProperty("--mgx", (x * 0.1).toFixed(2) + "px");
-        item.style.setProperty("--mgy", (y * 0.12).toFixed(2) + "px");
-      });
-      item.addEventListener("pointerleave", function () {
-        item.style.transform = "";
-        item.style.setProperty("--mgx", "0px");
-        item.style.setProperty("--mgy", "0px");
-      });
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) hideCursor();
     });
+
+    /* Botões magnéticos: acompanham levemente o ponteiro (só com movimento) */
+    if (!reducedMotion) {
+      var magneticItems = Array.prototype.slice.call(
+        document.querySelectorAll(".button, .nav-whatsapp, .floating-whatsapp")
+      );
+
+      magneticItems.forEach(function (item) {
+        item.addEventListener("pointermove", function (event) {
+          var rect = item.getBoundingClientRect();
+          var x = event.clientX - (rect.left + rect.width / 2);
+          var y = event.clientY - (rect.top + rect.height / 2);
+          item.style.transform = "translate3d(" + x * 0.12 + "px, " + y * 0.16 + "px, 0)";
+          /* Magnet (React Bits): a camada interna (seta) desloca um extra,
+             criando profundidade — o conteúdo "escapa" um pouco mais que o botão. */
+          item.style.setProperty("--mgx", (x * 0.1).toFixed(2) + "px");
+          item.style.setProperty("--mgy", (y * 0.12).toFixed(2) + "px");
+        });
+        item.addEventListener("pointerleave", function () {
+          item.style.transform = "";
+          item.style.setProperty("--mgx", "0px");
+          item.style.setProperty("--mgy", "0px");
+        });
+      });
+    }
   }
 
   /* ---------- Acordeão do FAQ (um item aberto por vez) ---------- */
@@ -3955,6 +3906,57 @@
         yName: "Itens"
       });
     });
+  })();
+
+  /* ---------- v27 — Galeria "Todos os sites": filtros Sites / Sistemas / IA ----------
+     Cada cartão declara data-cat (pode ter mais de uma categoria, ex. "site ia").
+     O filtro esconde com o atributo hidden ([hidden]{display:none!important}); sem
+     JS, todos os cartões aparecem. */
+  (function () {
+    var bar = document.getElementById("gallery-bar");
+    if (!bar) return;
+    var botoes = Array.prototype.slice.call(bar.querySelectorAll(".gallery-filter"));
+    var cards = Array.prototype.slice.call(document.querySelectorAll("#projects-grid .project-card"));
+    var count = document.getElementById("gallery-count");
+    var NOME = { site: "SITES", sistema: "SISTEMAS", ia: "IAS" };
+
+    function aplicar(filtro) {
+      var n = 0;
+      var aoVivo = 0;
+      botoes.forEach(function (b) {
+        b.setAttribute("aria-pressed", b.dataset.filter === filtro ? "true" : "false");
+      });
+      cards.forEach(function (card) {
+        var cats = " " + (card.dataset.cat || "") + " ";
+        var entra = cats.indexOf(" " + filtro + " ") >= 0;
+        card.hidden = !entra;
+        if (!entra) return;
+        n++;
+        /* "no ar" = link público ou este próprio site (nexus-taubate.netlify.app) */
+        if (card.querySelector('a.project-shot[href^="http"]') || card.classList.contains("project-card-self")) aoVivo++;
+      });
+      if (count) {
+        var txt = n + " " + (NOME[filtro] || "ITENS");
+        if (filtro === "site") txt += " · " + aoVivo + " NO AR";
+        else if (filtro === "sistema") txt += " · RODANDO HOJE, COM LOGIN";
+        else txt += " · UMA NO WHATSAPP, UMA PARA TESTAR AQUI";
+        count.textContent = txt;
+      }
+      botoes.forEach(function (b) {
+        var qtd = cards.filter(function (c) {
+          return (" " + (c.dataset.cat || "") + " ").indexOf(" " + b.dataset.filter + " ") >= 0;
+        }).length;
+        var num = b.querySelector("b");
+        if (num) num.textContent = String(qtd);
+      });
+    }
+
+    botoes.forEach(function (b) {
+      b.addEventListener("click", function () {
+        aplicar(b.dataset.filter);
+      });
+    });
+    aplicar("site");
   })();
 
   /* ---------- Projetos: hairline dourada que corre na base do card ao pousar ---------- */
